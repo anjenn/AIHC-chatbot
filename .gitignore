@@ -205,3 +205,29 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Local datasets and generated experiment artifacts
+/data/
+/outputs/
+/report.md
+/README.md
+/src/report_builder.py
+
+# Common local dataset/model/archive artifacts
+*.7z
+*.arrow
+*.ckpt
+*.feather
+*.h5
+*.hdf5
+*.joblib
+*.npy
+*.npz
+*.onnx
+*.parquet
+*.pkl
+*.pt
+*.pth
+*.tar
+*.tar.gz
+*.zip
