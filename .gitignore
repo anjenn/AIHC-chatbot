@@ -209,9 +209,9 @@ __marimo__/
 # Local datasets and generated experiment artifacts
 /data/
 /outputs/
-/report.md
 /README.md
 /src/report_builder.py
+*[Rr]eport*.md
 
 # Common local dataset/model/archive artifacts
 *.7z

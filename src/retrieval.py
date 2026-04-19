@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import re
 
 import pandas as pd
@@ -15,9 +16,18 @@ def normalize_symptom_text(text: object) -> str:
     return text
 
 
+def tokenize_simple(text: object) -> list[str]:
+    # Tokenize free text into lightweight lexical units for retrieval.
+    return re.findall(r"[a-zA-Z']+", str(text).lower())
+
+
 def symptom_token_set(text: object) -> set[str]:
     # Convert a comma-separated symptom string into a normalized token set.
-    parts = [part.strip() for part in normalize_symptom_text(text).split(",") if part.strip()]
+    parts = [
+        part.strip()
+        for part in normalize_symptom_text(text).split(",")
+        if part.strip()
+    ]
     return set(parts)
 
 
@@ -59,3 +69,94 @@ def build_retrieved_few_shot_context(
         )
 
     return "\n\n".join(chunks)
+
+
+def retrieve_candidate_labels(
+    symptoms: str,
+    label_space: list[str],
+    k: int = 5,
+) -> list[str]:
+    # Retrieve candidate labels from the closed set using lexical overlap.
+    symptom_counts = Counter(tokenize_simple(symptoms))
+    scored: list[tuple[str, int]] = []
+
+    for label in label_space:
+        label_tokens = tokenize_simple(label)
+        overlap = sum(symptom_counts[token] for token in label_tokens)
+        scored.append((label, overlap))
+
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    candidates = [label for label, _ in scored[:k] if label]
+    return candidates or label_space[:k]
+
+
+def retrieve_candidate_labels_from_examples(
+    row: pd.Series,
+    train_df: pd.DataFrame,
+    label_space: list[str],
+    k_neighbors: int = 8,
+    k: int = 5,
+) -> list[str]:
+    # Retrieve candidate labels from similar training examples with lexical fallback.
+    sample = retrieve_similar_examples(row, train_df, n=k_neighbors)
+    diagnosis_col = "diagnosis" if "diagnosis" in sample.columns else "label"
+    candidate_scores: Counter[str] = Counter()
+
+    for rank, (_, retrieved_row) in enumerate(sample.iterrows(), start=1):
+        label = str(retrieved_row.get(diagnosis_col, "")).strip()
+        if label in label_space:
+            candidate_scores[label] += max(k_neighbors - rank + 1, 1)
+
+    ordered_candidates = [label for label, _ in candidate_scores.most_common()]
+    lexical_candidates = retrieve_candidate_labels(
+        symptoms=str(row.get("symptoms", "")),
+        label_space=label_space,
+        k=max(k, len(ordered_candidates)),
+    )
+
+    merged: list[str] = []
+    for label in ordered_candidates + lexical_candidates:
+        if label and label not in merged:
+            merged.append(label)
+        if len(merged) >= k:
+            break
+
+    return merged or label_space[:k]
+
+
+def score_snippet_overlap(case_query: str, snippet: str) -> int:
+    # Score evidence overlap using lightweight lexical intersection.
+    case_tokens = set(tokenize_simple(case_query))
+    snippet_tokens = set(tokenize_simple(snippet))
+    return len(case_tokens & snippet_tokens)
+
+
+def retrieve_evidence_snippets(
+    case_query: str,
+    knowledge_snippets: pd.DataFrame,
+    k: int = 3,
+    label_space: list[str] | None = None,
+) -> list[str]:
+    # Retrieve the most relevant evidence snippets for the case query.
+    text_col = "text" if "text" in knowledge_snippets.columns else "snippet"
+    rows: list[tuple[str, int]] = []
+    normalized_labels = [
+        normalize_symptom_text(label) for label in (label_space or []) if str(label).strip()
+    ]
+
+    for _, row in knowledge_snippets.iterrows():
+        text = " ".join(str(row.get(text_col, "")).split())
+        if not text:
+            continue
+
+        if normalized_labels:
+            text_norm = normalize_symptom_text(text)
+            if any(label in text_norm for label in normalized_labels):
+                continue
+
+        score = score_snippet_overlap(case_query, text)
+        rows.append((text, score))
+
+    rows.sort(key=lambda item: item[1], reverse=True)
+    top = [text for text, score in rows if score > 0][:k]
+    return list(dict.fromkeys(top))

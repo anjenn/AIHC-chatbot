@@ -33,5 +33,9 @@ TEST_SIZE = 0.2
 EXPERIMENT_CASES = int(os.environ.get("EXPERIMENT_CASES", "20"))
 FEW_SHOT_EXAMPLES = int(os.environ.get("FEW_SHOT_EXAMPLES", "4"))
 KNOWLEDGE_TOP_K = int(os.environ.get("KNOWLEDGE_TOP_K", "2"))
+CANDIDATE_NEIGHBORS = int(os.environ.get("CANDIDATE_NEIGHBORS", "8"))
+CANDIDATE_TOP_K = int(os.environ.get("CANDIDATE_TOP_K", "5"))
+EVIDENCE_TOP_K = int(os.environ.get("EVIDENCE_TOP_K", str(KNOWLEDGE_TOP_K)))
+EVIDENCE_CHAR_LIMIT = int(os.environ.get("EVIDENCE_CHAR_LIMIT", "400"))
 SELF_CONSISTENCY_RUNS = int(os.environ.get("SELF_CONSISTENCY_RUNS", "3"))
 REBALANCE_TOP_LABELS = os.environ.get("REBALANCE_TOP_LABELS", "true").lower() == "true"

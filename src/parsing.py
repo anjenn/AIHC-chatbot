@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 
@@ -40,7 +41,50 @@ def safe_json_load(text: str):
     try:
         return json.loads(text)
     except Exception:
-        return None
+        try:
+            return ast.literal_eval(text)
+        except Exception:
+            return None
+
+
+def _coerce_string_list(value: object) -> list[str]:
+    # Convert a value into a compact list of strings.
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [stripped] if stripped else []
+    return []
+
+
+def _coerce_confidence(value: object) -> float:
+    # Parse numeric confidence values while keeping them inside [0, 1].
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, min(1.0, confidence))
+
+
+def _default_ranked_output(top_k: int) -> dict[str, object]:
+    # Build a stable fallback output for parser failures.
+    ranked_diagnoses = [
+        {
+            "label": "unknown",
+            "confidence": 0.0,
+            "supporting_evidence": [],
+            "missing_or_uncertain": [],
+        }
+        for _ in range(top_k)
+    ]
+    return {
+        "primary_diagnosis": "unknown",
+        "ranked_diagnoses": ranked_diagnoses,
+        "top_labels": ["unknown"] * top_k,
+        "top_confidences": [0.0] * top_k,
+        "guidance": "",
+        "consultation_guidance": "",
+    }
 
 
 def parse_ranked_output(
@@ -48,41 +92,74 @@ def parse_ranked_output(
     label_space: list[str],
     top_k: int = 3,
 ) -> dict[str, object]:
-    # Extract top labels, confidences, and guidance from model output.
+    # Extract ranked diagnoses, confidence proxies, and guidance from model output.
     parsed = safe_json_load(raw_output)
+    default_output = _default_ranked_output(top_k)
 
-    default_output = {
-        "top_labels": ["unknown"] * top_k,
-        "top_confidences": [0.0] * top_k,
-        "guidance": "",
-    }
-
-    if parsed is None:
+    if not isinstance(parsed, dict):
         return default_output
 
-    items = parsed.get("top_3", [])
-    guidance = str(parsed.get("guidance", "")).strip()
+    items = parsed.get("ranked_diagnoses", [])
+    if not isinstance(items, list):
+        items = []
 
-    labels: list[str] = []
-    confidences: list[float] = []
+    if not items:
+        legacy_items = parsed.get("top_3", [])
+        if isinstance(legacy_items, list):
+            items = legacy_items
+
+    if not items and parsed.get("primary_diagnosis"):
+        items = [{"label": parsed.get("primary_diagnosis", ""), "confidence": 0.0}]
+
+    guidance = str(
+        parsed.get("consultation_guidance", parsed.get("guidance", ""))
+    ).strip()
+
+    normalized_items: list[dict[str, object]] = []
+    top_labels: list[str] = []
+    top_confidences: list[float] = []
 
     for item in items[:top_k]:
+        if not isinstance(item, dict):
+            continue
+
         label = normalize_label_to_allowed(item.get("label", ""), label_space)
+        confidence = _coerce_confidence(item.get("confidence", 0.0))
+        supporting_evidence = _coerce_string_list(item.get("supporting_evidence", []))
+        missing_or_uncertain = _coerce_string_list(item.get("missing_or_uncertain", []))
 
-        try:
-            conf = float(item.get("confidence", 0.0))
-        except Exception:
-            conf = 0.0
+        normalized_items.append(
+            {
+                "label": label,
+                "confidence": confidence,
+                "supporting_evidence": supporting_evidence,
+                "missing_or_uncertain": missing_or_uncertain,
+            }
+        )
+        top_labels.append(label)
+        top_confidences.append(confidence)
 
-        labels.append(label)
-        confidences.append(conf)
+    while len(normalized_items) < top_k:
+        normalized_items.append(
+            {
+                "label": "unknown",
+                "confidence": 0.0,
+                "supporting_evidence": [],
+                "missing_or_uncertain": [],
+            }
+        )
+        top_labels.append("unknown")
+        top_confidences.append(0.0)
 
-    while len(labels) < top_k:
-        labels.append("unknown")
-        confidences.append(0.0)
+    primary = normalize_label_to_allowed(parsed.get("primary_diagnosis", ""), label_space)
+    if primary == "unknown" and top_labels:
+        primary = top_labels[0]
 
     return {
-        "top_labels": labels,
-        "top_confidences": confidences,
+        "primary_diagnosis": primary,
+        "ranked_diagnoses": normalized_items,
+        "top_labels": top_labels[:top_k],
+        "top_confidences": top_confidences[:top_k],
         "guidance": guidance,
+        "consultation_guidance": guidance,
     }

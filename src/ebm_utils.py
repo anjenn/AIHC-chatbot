@@ -89,42 +89,50 @@ def load_knowledge_snippets(path: str | Path) -> pd.DataFrame:
     # Load a CSV containing short prompt-level knowledge snippets.
     knowledge_df = pd.read_csv(path)
 
-    if "snippet" not in knowledge_df.columns:
-        raise ValueError("Knowledge snippet file must contain a 'snippet' column.")
+    if "text" not in knowledge_df.columns:
+        if "snippet" not in knowledge_df.columns:
+            raise ValueError(
+                "Knowledge snippet file must contain either a 'text' or 'snippet' column."
+            )
+        knowledge_df["text"] = knowledge_df["snippet"]
 
-    return knowledge_df
+    if "snippet" not in knowledge_df.columns:
+        knowledge_df["snippet"] = knowledge_df["text"]
+
+    knowledge_df["text"] = knowledge_df["text"].fillna("").astype(str).str.strip()
+    knowledge_df["snippet"] = knowledge_df["snippet"].fillna("").astype(str).str.strip()
+    return knowledge_df[knowledge_df["text"] != ""].reset_index(drop=True)
 
 
 def retrieve_knowledge(
-    symptoms: str,
+    query: str,
     knowledge_df: pd.DataFrame,
     top_k: int = 2,
     label_space: list[str] | None = None,
 ) -> list[str]:
-    # Retrieve relevant snippets using symptom keywords and label-match filtering.
-    symptom_terms = symptom_keywords(symptoms)
+    # Retrieve lightweight knowledge snippets using overlap scoring.
+    query_terms = symptom_keywords(query)
     scores: list[tuple[str, int]] = []
 
     for _, row in knowledge_df.iterrows():
-        snippet = str(row["snippet"])
-        if snippet_has_label_match(snippet, label_space):
+        snippet = str(row.get("text", row.get("snippet", ""))).strip()
+        if not snippet or snippet_has_label_match(snippet, label_space):
             continue
 
         snippet_norm = normalize_symptom_text(snippet)
         snippet_terms = symptom_keywords(snippet)
         phrase_overlap = sum(
-            1 for term in symptom_terms if " " in term and term in snippet_norm
+            1 for term in query_terms if " " in term and term in snippet_norm
         )
-        token_overlap = len(
-            {term for term in symptom_terms if " " not in term} & snippet_terms
-        )
+        token_overlap = len({term for term in query_terms if " " not in term} & snippet_terms)
+
         if phrase_overlap == 0 and token_overlap < 2:
             continue
 
         score = phrase_overlap * 3 + token_overlap
         scores.append((snippet, score))
 
-    scores = sorted(scores, key=lambda item: item[1], reverse=True)
+    scores.sort(key=lambda item: item[1], reverse=True)
     return [snippet for snippet, score in scores[:top_k] if score > 0]
 
 

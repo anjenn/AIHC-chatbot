@@ -53,6 +53,76 @@ def run_openai(prompt: str, model: str = OPENAI_MODEL, temperature: float = 0):
     return "\n".join(text_chunks).strip()
 
 
+def aggregate_self_consistency(
+    parsed_outputs: list[dict[str, object]],
+    top_k: int = 3,
+) -> dict[str, object]:
+    # Convert repeated model samples into vote-based ranked diagnoses.
+    vote_counter: Counter[str] = Counter()
+    label_metadata: dict[str, dict[str, object]] = {}
+    guidance = ""
+
+    for parsed in parsed_outputs:
+        if not guidance:
+            guidance = str(
+                parsed.get("consultation_guidance", parsed.get("guidance", ""))
+            ).strip()
+
+        primary = str(parsed.get("primary_diagnosis", "")).strip()
+        if primary and primary != "unknown":
+            vote_counter[primary] += 1
+
+        for item in parsed.get("ranked_diagnoses", []):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "")).strip()
+            if label and label not in label_metadata:
+                label_metadata[label] = item
+
+    total_votes = sum(vote_counter.values())
+    ranked_votes = vote_counter.most_common(top_k)
+    ranked_diagnoses: list[dict[str, object]] = []
+
+    for label, count in ranked_votes:
+        template = label_metadata.get(
+            label,
+            {"supporting_evidence": [], "missing_or_uncertain": []},
+        )
+        ranked_diagnoses.append(
+            {
+                "label": label,
+                "confidence": round(count / total_votes, 4) if total_votes else 0.0,
+                "supporting_evidence": list(template.get("supporting_evidence", [])),
+                "missing_or_uncertain": list(template.get("missing_or_uncertain", [])),
+            }
+        )
+
+    while len(ranked_diagnoses) < top_k:
+        ranked_diagnoses.append(
+            {
+                "label": "unknown",
+                "confidence": 0.0,
+                "supporting_evidence": [],
+                "missing_or_uncertain": [],
+            }
+        )
+
+    primary = ranked_diagnoses[0]["label"] if ranked_diagnoses else "unknown"
+    top_3 = [
+        {"label": item["label"], "confidence": item["confidence"]}
+        for item in ranked_diagnoses
+    ]
+
+    return {
+        "primary_diagnosis": primary,
+        "ranked_diagnoses": ranked_diagnoses,
+        "consultation_guidance": guidance,
+        "guidance": guidance,
+        "top_3": top_3,
+        "vote_counter": dict(vote_counter),
+    }
+
+
 def run_self_consistency_ranked(
     prompt: str,
     label_space: list[str],
@@ -61,30 +131,10 @@ def run_self_consistency_ranked(
     model: str = OPENAI_MODEL,
 ) -> dict[str, object]:
     # Aggregate multiple generations into a vote-based ranked result.
-    vote_counter: Counter[str] = Counter()
-    guidance_texts: list[str] = []
+    parsed_outputs: list[dict[str, object]] = []
 
     for _ in range(n):
         raw = run_openai(prompt, model=model, temperature=0.7)
-        parsed = parse_fn(raw, label_space, top_k=3)
+        parsed_outputs.append(parse_fn(raw, label_space, top_k=3))
 
-        for rank, label in enumerate(parsed["top_labels"]):
-            if label != "unknown":
-                vote_counter[label] += 3 - rank
-
-        if parsed["guidance"]:
-            guidance_texts.append(parsed["guidance"])
-
-    ranked = vote_counter.most_common(3)
-    total_votes = sum(vote_counter.values()) if sum(vote_counter.values()) > 0 else 1
-
-    top_3: list[dict[str, object]] = []
-    for label, count in ranked:
-        top_3.append({"label": label, "confidence": round(count / total_votes, 4)})
-
-    while len(top_3) < 3:
-        top_3.append({"label": "unknown", "confidence": 0.0})
-
-    guidance = guidance_texts[0] if guidance_texts else ""
-
-    return {"top_3": top_3, "guidance": guidance}
+    return aggregate_self_consistency(parsed_outputs, top_k=3)
