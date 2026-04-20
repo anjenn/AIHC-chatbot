@@ -7,6 +7,7 @@ from collections import Counter
 from openai import OpenAI
 
 from src.config import OPENAI_API_KEY, OPENAI_MODEL
+from src.prompts import DEFAULT_VALIDATION_QUESTION
 
 
 _client: OpenAI | None = None
@@ -59,31 +60,54 @@ def aggregate_self_consistency(
 ) -> dict[str, object]:
     # Convert repeated model samples into vote-based ranked diagnoses.
     vote_counter: Counter[str] = Counter()
+    support_counter: Counter[str] = Counter()
     label_metadata: dict[str, dict[str, object]] = {}
     guidance = ""
+    similar_cases: list[str] = []
+    validation_question = DEFAULT_VALIDATION_QUESTION
 
     for parsed in parsed_outputs:
         if not guidance:
             guidance = str(
                 parsed.get("consultation_guidance", parsed.get("guidance", ""))
             ).strip()
+        if not similar_cases:
+            similar_cases = list(parsed.get("similar_cases", []))
+        if validation_question == DEFAULT_VALIDATION_QUESTION:
+            validation_question = str(
+                parsed.get("validation_question", DEFAULT_VALIDATION_QUESTION)
+            ).strip() or DEFAULT_VALIDATION_QUESTION
 
         primary = str(parsed.get("primary_diagnosis", "")).strip()
         if primary and primary != "unknown":
             vote_counter[primary] += 1
 
-        for item in parsed.get("ranked_diagnoses", []):
+        for rank, item in enumerate(parsed.get("ranked_diagnoses", []), start=1):
             if not isinstance(item, dict):
                 continue
             label = str(item.get("label", "")).strip()
-            if label and label not in label_metadata:
+            if not label or label == "unknown":
+                continue
+            if label not in label_metadata:
                 label_metadata[label] = item
+            support_counter[label] += max(top_k - rank + 1, 1)
 
     total_votes = sum(vote_counter.values())
-    ranked_votes = vote_counter.most_common(top_k)
+    total_support = sum(support_counter.values())
+    ranked_labels: list[str] = []
+    for label, _ in vote_counter.most_common():
+        if label not in ranked_labels:
+            ranked_labels.append(label)
+    for label, _ in support_counter.most_common():
+        if label not in ranked_labels:
+            ranked_labels.append(label)
+        if len(ranked_labels) >= top_k:
+            break
+
     ranked_diagnoses: list[dict[str, object]] = []
 
-    for label, count in ranked_votes:
+    for label in ranked_labels[:top_k]:
+        count = vote_counter.get(label, 0)
         template = label_metadata.get(
             label,
             {"supporting_evidence": [], "missing_or_uncertain": []},
@@ -92,6 +116,12 @@ def aggregate_self_consistency(
             {
                 "label": label,
                 "confidence": round(count / total_votes, 4) if total_votes else 0.0,
+                "display_score": round(
+                    support_counter.get(label, 0) / total_support,
+                    4,
+                )
+                if total_support
+                else 0.0,
                 "supporting_evidence": list(template.get("supporting_evidence", [])),
                 "missing_or_uncertain": list(template.get("missing_or_uncertain", [])),
             }
@@ -102,15 +132,27 @@ def aggregate_self_consistency(
             {
                 "label": "unknown",
                 "confidence": 0.0,
+                "display_score": 0.0,
                 "supporting_evidence": [],
                 "missing_or_uncertain": [],
             }
         )
 
     primary = ranked_diagnoses[0]["label"] if ranked_diagnoses else "unknown"
+    top_labels = [str(item["label"]) for item in ranked_diagnoses[:top_k]]
+    top_confidences = [float(item["confidence"]) for item in ranked_diagnoses[:top_k]]
+    top_display_scores = [float(item["display_score"]) for item in ranked_diagnoses[:top_k]]
     top_3 = [
-        {"label": item["label"], "confidence": item["confidence"]}
-        for item in ranked_diagnoses
+        {
+            "label": label,
+            "confidence": confidence,
+            "display_score": display_score,
+        }
+        for label, confidence, display_score in zip(
+            top_labels,
+            top_confidences,
+            top_display_scores,
+        )
     ]
 
     return {
@@ -118,8 +160,14 @@ def aggregate_self_consistency(
         "ranked_diagnoses": ranked_diagnoses,
         "consultation_guidance": guidance,
         "guidance": guidance,
+        "similar_cases": similar_cases[:3],
+        "validation_question": validation_question,
+        "top_labels": top_labels,
+        "top_confidences": top_confidences,
+        "top_display_scores": top_display_scores,
         "top_3": top_3,
         "vote_counter": dict(vote_counter),
+        "support_counter": dict(support_counter),
     }
 
 

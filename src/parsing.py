@@ -6,6 +6,8 @@ import ast
 import json
 import re
 
+from src.prompts import DEFAULT_VALIDATION_QUESTION
+
 
 def normalize_text(text: object) -> str:
     # Lowercase and whitespace-normalize text.
@@ -66,12 +68,23 @@ def _coerce_confidence(value: object) -> float:
     return max(0.0, min(1.0, confidence))
 
 
+def _coerce_similar_cases(value: object) -> list[str]:
+    # Keep similar cases as a short, stable list of display strings.
+    cases = _coerce_string_list(value)
+    deduped: list[str] = []
+    for case in cases:
+        if case not in deduped:
+            deduped.append(case)
+    return deduped[:3]
+
+
 def _default_ranked_output(top_k: int) -> dict[str, object]:
     # Build a stable fallback output for parser failures.
     ranked_diagnoses = [
         {
             "label": "unknown",
             "confidence": 0.0,
+            "display_score": 0.0,
             "supporting_evidence": [],
             "missing_or_uncertain": [],
         }
@@ -82,8 +95,11 @@ def _default_ranked_output(top_k: int) -> dict[str, object]:
         "ranked_diagnoses": ranked_diagnoses,
         "top_labels": ["unknown"] * top_k,
         "top_confidences": [0.0] * top_k,
+        "top_display_scores": [0.0] * top_k,
         "guidance": "",
         "consultation_guidance": "",
+        "similar_cases": [],
+        "validation_question": DEFAULT_VALIDATION_QUESTION,
     }
 
 
@@ -114,10 +130,15 @@ def parse_ranked_output(
     guidance = str(
         parsed.get("consultation_guidance", parsed.get("guidance", ""))
     ).strip()
+    similar_cases = _coerce_similar_cases(parsed.get("similar_cases", []))
+    validation_question = str(
+        parsed.get("validation_question", DEFAULT_VALIDATION_QUESTION)
+    ).strip() or DEFAULT_VALIDATION_QUESTION
 
     normalized_items: list[dict[str, object]] = []
     top_labels: list[str] = []
     top_confidences: list[float] = []
+    top_display_scores: list[float] = []
 
     for item in items[:top_k]:
         if not isinstance(item, dict):
@@ -125,6 +146,9 @@ def parse_ranked_output(
 
         label = normalize_label_to_allowed(item.get("label", ""), label_space)
         confidence = _coerce_confidence(item.get("confidence", 0.0))
+        display_score = _coerce_confidence(
+            item.get("display_score", item.get("confidence", 0.0))
+        )
         supporting_evidence = _coerce_string_list(item.get("supporting_evidence", []))
         missing_or_uncertain = _coerce_string_list(item.get("missing_or_uncertain", []))
 
@@ -132,24 +156,28 @@ def parse_ranked_output(
             {
                 "label": label,
                 "confidence": confidence,
+                "display_score": display_score,
                 "supporting_evidence": supporting_evidence,
                 "missing_or_uncertain": missing_or_uncertain,
             }
         )
         top_labels.append(label)
         top_confidences.append(confidence)
+        top_display_scores.append(display_score)
 
     while len(normalized_items) < top_k:
         normalized_items.append(
             {
                 "label": "unknown",
                 "confidence": 0.0,
+                "display_score": 0.0,
                 "supporting_evidence": [],
                 "missing_or_uncertain": [],
             }
         )
         top_labels.append("unknown")
         top_confidences.append(0.0)
+        top_display_scores.append(0.0)
 
     primary = normalize_label_to_allowed(parsed.get("primary_diagnosis", ""), label_space)
     if primary == "unknown" and top_labels:
@@ -160,6 +188,9 @@ def parse_ranked_output(
         "ranked_diagnoses": normalized_items,
         "top_labels": top_labels[:top_k],
         "top_confidences": top_confidences[:top_k],
+        "top_display_scores": top_display_scores[:top_k],
         "guidance": guidance,
         "consultation_guidance": guidance,
+        "similar_cases": similar_cases,
+        "validation_question": validation_question,
     }

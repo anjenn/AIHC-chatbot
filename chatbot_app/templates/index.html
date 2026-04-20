@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIHC Consultation Support</title>
+  <style>
+    :root {
+      --bg: #f6f1e7;
+      --panel: #fffaf0;
+      --border: #d8cdbb;
+      --text: #1f1c16;
+      --muted: #6f6658;
+      --accent: #b86328;
+      --assistant: #efe6d6;
+      --user: #f6d6bf;
+      --danger: #a2302a;
+      --shadow: 0 18px 50px rgba(77, 56, 26, 0.12);
+      --radius: 20px;
+      --font: "Segoe UI", system-ui, sans-serif;
+      --mono: "Consolas", "Courier New", monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(184, 99, 40, 0.12), transparent 28%),
+        linear-gradient(180deg, #fbf6ee 0%, var(--bg) 100%);
+      color: var(--text);
+      font-family: var(--font);
+      padding: 20px;
+    }
+
+    .shell {
+      max-width: 900px;
+      margin: 0 auto;
+      background: rgba(255, 250, 240, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      min-height: calc(100vh - 40px);
+    }
+
+    .header {
+      padding: 20px 24px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .title {
+      display: grid;
+      gap: 6px;
+    }
+
+    .eyebrow {
+      font-size: 0.78rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      font-family: var(--mono);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.4rem;
+    }
+
+    .model {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 0.75rem;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .messages {
+      padding: 22px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .welcome,
+    .message {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      line-height: 1.6;
+      background: var(--panel);
+    }
+
+    .welcome p {
+      margin: 8px 0 0;
+      color: var(--muted);
+    }
+
+    .welcome-text,
+    .message-body {
+      white-space: pre-wrap;
+    }
+
+    .intake-card {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.68);
+    }
+
+    .intake-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 8px;
+    }
+
+    .message.user {
+      background: var(--user);
+      align-self: flex-end;
+      max-width: 84%;
+    }
+
+    .message.assistant {
+      background: var(--assistant);
+      max-width: 84%;
+    }
+
+    .message.error {
+      background: #f6dddd;
+      border-color: #e2b4b2;
+      color: var(--danger);
+    }
+
+    .role {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      font-family: var(--mono);
+      margin-bottom: 6px;
+    }
+
+    .composer {
+      border-top: 1px solid var(--border);
+      padding: 18px 22px 22px;
+      display: grid;
+      gap: 10px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 120px;
+      resize: vertical;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 16px;
+      font: inherit;
+      color: var(--text);
+      background: white;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .status {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 12px 16px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .send {
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+
+    .clear {
+      background: #e9dfcf;
+      color: var(--text);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    @media (max-width: 700px) {
+      body {
+        padding: 0;
+      }
+
+      .shell {
+        min-height: 100vh;
+        border-radius: 0;
+      }
+
+      .message.user,
+      .message.assistant {
+        max-width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div class="title">
+        <div class="eyebrow">Consultation Support</div>
+        <h1>AIHC Diagnostic Reasoning Support</h1>
+      </div>
+      <div class="model">{{ model_name }}</div>
+    </header>
+
+    <section class="messages" id="messages">
+      <div class="welcome" id="welcome">
+        <div class="role">Structured Intake</div>
+        <div class="welcome-text">Share one patient summary at a time. The app will convert it into a structured case query, compare it against the closed diagnosis set, retrieve similar cases, and return ranked consultation-oriented possibilities.</div>
+        <div class="intake-card">
+          <div class="intake-label">Paste This Format</div>
+          <div class="welcome-text">{{ structured_intake_prompt }}</div>
+        </div>
+        <p>
+          This is a consultation support tool, not a confirmed diagnosis engine or a replacement for a clinician.
+        </p>
+      </div>
+    </section>
+
+    <section class="composer">
+      <textarea id="input" placeholder="Paste the structured intake here. Press Ctrl+Enter to analyze."></textarea>
+      <div class="actions">
+        <div class="status" id="status">Ready</div>
+        <div class="buttons">
+          <button class="clear" id="clear" type="button">Reset</button>
+          <button class="send" id="send" type="button">Analyze</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const history = [];
+    let busy = false;
+    const structuredIntakePrompt = {{ structured_intake_prompt|tojson }};
+
+    const messagesEl = document.getElementById("messages");
+    const inputEl = document.getElementById("input");
+    const sendEl = document.getElementById("send");
+    const clearEl = document.getElementById("clear");
+    const statusEl = document.getElementById("status");
+
+    function setStatus(text) {
+      statusEl.textContent = text;
+    }
+
+    function removeWelcome() {
+      const welcome = document.getElementById("welcome");
+      if (welcome) {
+        welcome.remove();
+      }
+    }
+
+    function addMessage(role, content, extraClass = "") {
+      removeWelcome();
+      const article = document.createElement("article");
+      article.className = `message ${role} ${extraClass}`.trim();
+
+      const roleEl = document.createElement("div");
+      roleEl.className = "role";
+      roleEl.textContent = role === "user" ? "You" : role === "assistant" ? "Assistant" : "Error";
+
+      const contentEl = document.createElement("div");
+      contentEl.className = "message-body";
+      contentEl.textContent = content;
+
+      article.append(roleEl, contentEl);
+      messagesEl.appendChild(article);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return contentEl;
+    }
+
+    async function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text || busy) {
+        return;
+      }
+
+      history.push({ role: "user", content: text });
+      addMessage("user", text);
+      inputEl.value = "";
+
+      busy = true;
+      sendEl.disabled = true;
+      setStatus("Analyzing structured case...");
+
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ messages: history }),
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.detail || `HTTP ${response.status}`);
+        }
+
+        history.push({ role: "assistant", content: payload.reply });
+        addMessage("assistant", payload.reply);
+        setStatus("Ready");
+      } catch (error) {
+        addMessage("error", error.message, "error");
+        setStatus("Error");
+      } finally {
+        busy = false;
+        sendEl.disabled = false;
+        inputEl.focus();
+      }
+    }
+
+    sendEl.addEventListener("click", sendMessage);
+    clearEl.addEventListener("click", () => {
+      history.length = 0;
+      messagesEl.innerHTML = `
+        <div class="welcome" id="welcome">
+          <div class="role">Structured Intake</div>
+          <div class="welcome-text">Share one patient summary at a time. The app will convert it into a structured case query, compare it against the closed diagnosis set, retrieve similar cases, and return ranked consultation-oriented possibilities.</div>
+          <div class="intake-card">
+            <div class="intake-label">Paste This Format</div>
+            <div class="welcome-text">${structuredIntakePrompt}</div>
+          </div>
+          <p>
+            This is a consultation support tool, not a confirmed diagnosis engine or a replacement for a clinician.
+          </p>
+        </div>
+      `;
+      setStatus("Ready");
+      inputEl.focus();
+    });
+
+    inputEl.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && event.ctrlKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+  </script>
+</body>
+</html>

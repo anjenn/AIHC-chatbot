@@ -14,7 +14,7 @@ SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 
-# paths
+# Core filesystem paths.
 DATA_DIR = "data"
 SYNTHEA_DIR = os.path.join(DATA_DIR, "synthea")
 EBM_DIR = os.path.join(DATA_DIR, "ebm_nlp")
@@ -22,6 +22,4 @@ OUTPUT_DIR = "outputs"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# set this in your environment, not directly in code
-# os.environ["OPENAI_API_KEY"] = "..."
 OPENAI_MODEL = "gpt-5.4-mini"

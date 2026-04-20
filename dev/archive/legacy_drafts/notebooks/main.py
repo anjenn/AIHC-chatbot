@@ -1,7 +1,7 @@
 def safe_json_load(text):
     text = text.strip()
 
-    # remove markdown fences if present
+    # Strip optional markdown fences before JSON parsing.
     text = re.sub(r"^```json\s*", "", text)
     text = re.sub(r"^```\s*", "", text)
     text = re.sub(r"\s*```$", "", text)

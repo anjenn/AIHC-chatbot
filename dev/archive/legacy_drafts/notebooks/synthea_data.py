@@ -51,7 +51,7 @@ diagnosis_df = (
     .rename(columns={"DESCRIPTION_NORM": "diagnosis"})
 )
 
-# remove target diagnosis from symptom text
+# Exclude the selected diagnosis label from the remaining symptom text.
 conditions_with_target = conditions_df.merge(diagnosis_df, on="PATIENT", how="left")
 symptoms_only_df = conditions_with_target[
     conditions_with_target["DESCRIPTION_NORM"] != conditions_with_target["diagnosis"]

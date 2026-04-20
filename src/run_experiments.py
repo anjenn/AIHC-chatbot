@@ -38,12 +38,19 @@ from src.evaluation import (
 )
 from src.llm_runner import run_openai, run_self_consistency_ranked
 from src.parsing import normalize_label_to_allowed, parse_ranked_output
-from src.prompts import build_case_query, build_retrieve_then_reason_prompt
+from src.prompts import (
+    DEFAULT_VALIDATION_QUESTION,
+    build_case_query,
+    build_retrieve_then_reason_prompt,
+    build_structured_patient_summary,
+)
 from src.retrieval import (
     build_retrieved_few_shot_context,
     retrieve_candidate_labels,
     retrieve_candidate_labels_from_examples,
     retrieve_evidence_snippets,
+    retrieve_similar_case_summaries,
+    retrieve_similar_examples,
 )
 
 
@@ -53,6 +60,7 @@ def _default_parsed_output(top_k: int = 3) -> dict[str, object]:
         {
             "label": "unknown",
             "confidence": 0.0,
+            "display_score": 0.0,
             "supporting_evidence": [],
             "missing_or_uncertain": [],
         }
@@ -63,8 +71,11 @@ def _default_parsed_output(top_k: int = 3) -> dict[str, object]:
         "ranked_diagnoses": ranked_diagnoses,
         "top_labels": ["unknown"] * top_k,
         "top_confidences": [0.0] * top_k,
+        "top_display_scores": [0.0] * top_k,
         "consultation_guidance": "",
         "guidance": "",
+        "similar_cases": [],
+        "validation_question": DEFAULT_VALIDATION_QUESTION,
     }
 
 
@@ -137,13 +148,43 @@ def prepare_retrieve_then_reason_case(
     evidence_k: int = EVIDENCE_TOP_K,
 ) -> dict[str, object]:
     # Build the full retrieval and prompt context before LLM execution.
+    patient_summary = build_structured_patient_summary(
+        age=row.get("age"),
+        sex=row.get("sex"),
+        symptoms=row.get("symptoms", ""),
+        symptoms_started=row.get("symptoms_started", row.get("when_symptoms_started", "")),
+        severity=row.get("severity", ""),
+        fever=row.get("fever", ""),
+        breathing_difficulty=row.get("breathing_difficulty", ""),
+        chest_pain=row.get("chest_pain", ""),
+        bleeding=row.get("bleeding", ""),
+        confusion=row.get("confusion", ""),
+        existing_conditions=row.get("existing_conditions", ""),
+        recent_worsening=row.get("recent_worsening", ""),
+    )
     case_query = build_case_query(
         age=row.get("age"),
         sex=row.get("sex"),
         symptoms=row.get("symptoms", ""),
+        symptoms_started=row.get("symptoms_started", row.get("when_symptoms_started", "")),
+        severity=row.get("severity", ""),
+        fever=row.get("fever", ""),
+        breathing_difficulty=row.get("breathing_difficulty", ""),
+        chest_pain=row.get("chest_pain", ""),
+        bleeding=row.get("bleeding", ""),
+        confusion=row.get("confusion", ""),
+        existing_conditions=row.get("existing_conditions", ""),
+        recent_worsening=row.get("recent_worsening", ""),
+        patient_summary=patient_summary,
     )
 
+    similar_examples = None
     if train_df is not None:
+        similar_examples = retrieve_similar_examples(
+            row=row,
+            train_df=train_df,
+            n=max(CANDIDATE_NEIGHBORS, 6),
+        )
         candidate_labels = retrieve_candidate_labels_from_examples(
             row=row,
             train_df=train_df,
@@ -156,30 +197,50 @@ def prepare_retrieve_then_reason_case(
             symptoms=str(row.get("symptoms", "")),
             label_space=label_space,
             k=candidate_k,
+            case_query=case_query,
         )
 
-    evidence_snippets = []
-    if knowledge_snippets_df is not None and evidence_k > 0:
-        evidence_snippets = retrieve_evidence_snippets(
-            case_query=case_query,
-            knowledge_snippets=knowledge_snippets_df,
-            k=evidence_k,
-            label_space=label_space,
-        )
+    similar_cases: list[str] = []
+    if train_df is not None:
+        similar_cases = retrieve_similar_case_summaries(row=row, train_df=train_df, n=2)
+
+    evidence_snippets = retrieve_evidence_snippets(
+        case_query=case_query,
+        knowledge_snippets=knowledge_snippets_df,
+        k=evidence_k,
+        label_space=label_space,
+        candidate_labels=candidate_labels,
+        row=row,
+        train_df=train_df,
+        similar_examples=similar_examples,
+    )
 
     prompt = build_retrieve_then_reason_prompt(
         age=row.get("age"),
         sex=row.get("sex"),
         symptoms=row.get("symptoms", ""),
+        symptoms_started=row.get("symptoms_started", row.get("when_symptoms_started", "")),
+        severity=row.get("severity", ""),
+        fever=row.get("fever", ""),
+        breathing_difficulty=row.get("breathing_difficulty", ""),
+        chest_pain=row.get("chest_pain", ""),
+        bleeding=row.get("bleeding", ""),
+        confusion=row.get("confusion", ""),
+        existing_conditions=row.get("existing_conditions", ""),
+        recent_worsening=row.get("recent_worsening", ""),
         candidate_labels=candidate_labels,
         evidence_snippets=evidence_snippets,
         few_shot_context=few_shot_context,
+        similar_cases=similar_cases,
+        patient_summary=patient_summary,
     )
 
     return {
+        "patient_summary": patient_summary,
         "case_query": case_query,
         "candidate_labels": candidate_labels,
         "evidence_snippets": evidence_snippets,
+        "similar_cases": similar_cases,
         "few_shot_context": few_shot_context,
         "prompt": prompt,
     }
@@ -229,10 +290,12 @@ def finalize_result_row(
     parsed = case_artifact.get("parsed", _default_parsed_output())
     pred_labels = list(parsed["top_labels"])[:3]
     pred_confidences = list(parsed["top_confidences"])[:3]
+    pred_display_scores = list(parsed.get("top_display_scores", pred_confidences))[:3]
 
     while len(pred_labels) < 3:
         pred_labels.append("unknown")
         pred_confidences.append(0.0)
+        pred_display_scores.append(0.0)
 
     eval_row = evaluate_prediction(
         row["diagnosis"],
@@ -249,10 +312,13 @@ def finalize_result_row(
         "symptoms": row["symptoms"],
         "true_label": row["diagnosis"],
         "ground_truth": row["diagnosis"],
+        "patient_summary": case_artifact.get("patient_summary", ""),
         "case_query": case_artifact.get("case_query", ""),
         "candidate_labels": _json_dumps(case_artifact.get("candidate_labels", [])),
         "evidence_snippets": _json_dumps(case_artifact.get("evidence_snippets", [])),
         "knowledge_used": " | ".join(case_artifact.get("evidence_snippets", [])),
+        "similar_cases": _json_dumps(parsed.get("similar_cases", case_artifact.get("similar_cases", []))),
+        "validation_question": parsed.get("validation_question", DEFAULT_VALIDATION_QUESTION),
         "few_shot_context": case_artifact.get("few_shot_context", ""),
         "prompt": case_artifact.get("prompt", ""),
         "raw_output": case_artifact.get("raw_output", ""),
@@ -260,6 +326,8 @@ def finalize_result_row(
         "pred_top1": parsed["primary_diagnosis"],
         "pred_top3": _json_dumps(pred_labels),
         "top1_confidence": pred_confidences[0],
+        "top1_display_score": pred_display_scores[0],
+        "pred_display_scores": _json_dumps(pred_display_scores[:3]),
         "ranked_diagnoses": _json_dumps(parsed["ranked_diagnoses"]),
         "consultation_guidance": parsed["consultation_guidance"],
         "pred_1": pred_labels[0],
@@ -268,6 +336,9 @@ def finalize_result_row(
         "conf_1": pred_confidences[0],
         "conf_2": pred_confidences[1],
         "conf_3": pred_confidences[2],
+        "display_1": pred_display_scores[0],
+        "display_2": pred_display_scores[1],
+        "display_3": pred_display_scores[2],
         "guidance": parsed["consultation_guidance"],
         "error": error,
         **eval_row,

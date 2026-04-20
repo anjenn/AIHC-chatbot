@@ -6,3 +6,6 @@ scikit-learn
 tqdm
 jupyter
 matplotlib
+fastapi
+uvicorn
+jinja2
